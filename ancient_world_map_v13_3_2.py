@@ -6,7 +6,7 @@ from streamlit_folium import st_folium
 import uuid
 import numpy as np
 import os
-import gc  # <--- NEW: Garbage Collector for memory management
+import gc  # Garbage Collector
 
 # --- 0. AUTOMATIC DATABASE STITCHING ---
 DB_FILE = 'AncientWorld_Locations.db'
@@ -29,7 +29,6 @@ MIN_YEAR_LIMIT = -5000
 MAX_YEAR_LIMIT = 640
 LABEL_ZOOM_THRESHOLD = 7
 MAX_LABELS = 500
-# NEW: Hard limit on rendered points to prevent RAM crash
 MAX_RENDER_POINTS = 22000 
 
 # --- MAP STYLES ---
@@ -103,7 +102,7 @@ def load_base_data():
     df_geo = pd.read_sql_query("SELECT place_id, region FROM places_regions", conn)
     places_with_regions = set(df_geo['place_id'])
     
-    # NEW: Select only needed columns to save RAM
+    # Select only needed columns
     df_places = pd.read_sql_query(f"""
         SELECT p.id, p.title, p.representative_latitude as lat, p.representative_longitude as lon,
                pte.final_start, pte.final_end
@@ -113,7 +112,7 @@ def load_base_data():
         AND pte.final_start <= {MAX_YEAR_LIMIT} AND pte.final_end >= {MIN_YEAR_LIMIT}
     """, conn)
     
-    # NEW: Memory Optimization (Downcasting)
+    # Memory Optimization (Downcasting)
     df_places['id'] = pd.to_numeric(df_places['id'], errors='coerce').fillna(0).astype('int32')
     df_places['lat'] = pd.to_numeric(df_places['lat'], errors='coerce').astype('float32')
     df_places['lon'] = pd.to_numeric(df_places['lon'], errors='coerce').astype('float32')
@@ -133,7 +132,6 @@ def load_base_data():
 @st.cache_data
 def get_geojson_data(df):
     features = []
-    # Use standard tuple iteration for speed/memory
     for row in df.itertuples():
         features.append({
             "type": "Feature",
@@ -171,7 +169,6 @@ def sync_view_state():
     """Syncs the render anchor to the tracker."""
     st.session_state['render_center'] = st.session_state['map_center']
     st.session_state['render_zoom'] = st.session_state['map_zoom']
-    # Explicitly clear garbage to free memory
     gc.collect()
 
 # --- LOAD DATA ---
@@ -199,11 +196,30 @@ with tab_filters:
     st.selectbox("Find a place:", options=df_places['search_label'].tolist(), index=None, key="search_box", on_change=handle_search, placeholder="Type to search...")
     st.markdown("---")
     
-    if 'last_time_range' not in st.session_state: st.session_state['last_time_range'] = (-5000, -4000)
-    time_range = st.slider("Time Period", MIN_YEAR_LIMIT, MAX_YEAR_LIMIT, st.session_state['last_time_range'], 50, on_change=sync_view_state)
-    st.session_state['last_time_range'] = time_range
+    # --- LOGIC CHANGE: TIME FILTER TOGGLE ---
+    use_time_filter = st.toggle("⏱️ Filter by Time Range", value=False, on_change=sync_view_state)
+    
+    # Initialize valid_ids and filters_active flag
+    # If NO filters are active (Time or Dropdown), we show NOTHING (Empty Map)
+    filters_active = False
+    
+    if use_time_filter:
+        st.warning("⚠️ Time filter active! This restricts results from other filters.")
+        
+        if 'last_time_range' not in st.session_state: st.session_state['last_time_range'] = (-5000, -4000)
+        time_range = st.slider("Time Period", MIN_YEAR_LIMIT, MAX_YEAR_LIMIT, st.session_state['last_time_range'], 50, on_change=sync_view_state)
+        st.session_state['last_time_range'] = time_range
+        
+        # Apply Time Mask
+        mask_time = (df_places['final_start'] <= time_range[1]) & (df_places['final_end'] >= time_range[0])
+        valid_ids = set(df_places.loc[mask_time, 'id'])
+        filters_active = True
+    else:
+        # If Time Filter is OFF, start with ALL valid IDs, but mark filters as NOT active yet
+        valid_ids = set(df_places['id'])
 
     st.markdown("---")
+    
     def get_opt(df, col): return sorted([x for x in df[col].unique() if x and isinstance(x, str)])
     
     s_type = st.multiselect("Place Type", get_opt(df_types, 'place_type'), on_change=sync_view_state)
@@ -213,42 +229,71 @@ with tab_filters:
     s_sub = st.multiselect("System Subperiod", get_opt(df_epochs, 'system_subperiod'), on_change=sync_view_state)
     s_orig = st.multiselect("Original Pleiades Terms", get_opt(df_original, 'term'), on_change=sync_view_state)
 
-    # Apply Filters
-    mask_time = (df_places['final_start'] <= time_range[1]) & (df_places['final_end'] >= time_range[0])
-    valid_ids = set(df_places.loc[mask_time, 'id'])
-    def intersect(c_ids, df, col, vals): return c_ids.intersection(set(df[df[col].isin(vals)]['place_id'])) if vals else c_ids
-    valid_ids = intersect(valid_ids, df_types, 'place_type', s_type)
-    valid_ids = intersect(valid_ids, df_geo, 'region', s_reg)
-    valid_ids = intersect(valid_ids, df_epochs, 'system_era', s_era)
-    valid_ids = intersect(valid_ids, df_epochs, 'system_period', s_per)
-    valid_ids = intersect(valid_ids, df_epochs, 'system_subperiod', s_sub)
-    if s_orig: valid_ids = valid_ids.intersection(set(df_original[df_original['term'].isin(s_orig)]['place_id']))
+    # --- APPLY DROPDOWN FILTERS ---
+    def intersect(c_ids, df, col, vals): 
+        return c_ids.intersection(set(df[df[col].isin(vals)]['place_id'])) if vals else c_ids
+    
+    if s_type: 
+        valid_ids = intersect(valid_ids, df_types, 'place_type', s_type)
+        filters_active = True
+    if s_reg:
+        valid_ids = intersect(valid_ids, df_geo, 'region', s_reg)
+        filters_active = True
+    if s_era:
+        valid_ids = intersect(valid_ids, df_epochs, 'system_era', s_era)
+        filters_active = True
+    if s_per:
+        valid_ids = intersect(valid_ids, df_epochs, 'system_period', s_per)
+        filters_active = True
+    if s_sub:
+        valid_ids = intersect(valid_ids, df_epochs, 'system_subperiod', s_sub)
+        filters_active = True
+    if s_orig:
+        valid_ids = intersect(valid_ids, df_original, 'term', s_orig)
+        filters_active = True
+
+    # --- EMPTY MAP LOGIC ---
+    # If no Time Filter AND no Dropdowns are active, show empty map
+    if not filters_active:
+        valid_ids = set()
 
     df_view = df_places[df_places['id'].isin(valid_ids)].reset_index(drop=True)
     
     # --- MEMORY SAFETY VALVE ---
-    # If too many points, truncate them to avoid Free Tier crash
     total_results = len(df_view)
     if total_results > MAX_RENDER_POINTS:
         st.warning(f"⚠️ {total_results} places found. Showing top {MAX_RENDER_POINTS} to save memory. Filter to see specific results.")
         df_view = df_view.head(MAX_RENDER_POINTS)
     else:
-        st.caption(f"📍 {total_results} Places shown")
+        if filters_active:
+            st.caption(f"📍 {total_results} Places shown")
+        else:
+            st.caption("📍 Map empty. Select a filter to start.")
     
     st.markdown("### 📥 Export")
-    st.download_button("Download CSV", df_view.to_csv(index=False).encode('utf-8'), "ancient_places.csv", "text/csv")
+    if not df_view.empty:
+        st.download_button("Download CSV", df_view.to_csv(index=False).encode('utf-8'), "ancient_places.csv", "text/csv")
     
     with st.expander("📋 SQL Query"):
         def to_sql_list(items): return ", ".join([f"'{x}'" for x in items])
-        where_clauses = [f"id IN (SELECT place_id FROM places_temporal_extent WHERE final_start <= {time_range[1]} AND final_end >= {time_range[0]})"]
+        where_clauses = []
+        # Logic for SQL generation based on active filters
+        if use_time_filter:
+             where_clauses.append(f"id IN (SELECT place_id FROM places_temporal_extent WHERE final_start <= {time_range[1]} AND final_end >= {time_range[0]})")
+        
         where_clauses.append("id IN (SELECT DISTINCT place_id FROM places_regions)")
+        
         if s_type: where_clauses.append(f"id IN (SELECT place_id FROM places_place_types WHERE place_type IN ({to_sql_list(s_type)}))")
         if s_reg: where_clauses.append(f"id IN (SELECT place_id FROM places_regions WHERE region IN ({to_sql_list(s_reg)}))")
         if s_era: where_clauses.append(f"id IN (SELECT pem.place_id FROM places_epoch_mapping pem JOIN epoch_definitions ed ON pem.epoch_id = ed.id WHERE ed.system_era IN ({to_sql_list(s_era)}))")
         if s_per: where_clauses.append(f"id IN (SELECT pem.place_id FROM places_epoch_mapping pem JOIN epoch_definitions ed ON pem.epoch_id = ed.id WHERE ed.system_period IN ({to_sql_list(s_per)}))")
         if s_sub: where_clauses.append(f"id IN (SELECT pem.place_id FROM places_epoch_mapping pem JOIN epoch_definitions ed ON pem.epoch_id = ed.id WHERE ed.system_subperiod IN ({to_sql_list(s_sub)}))")
         if s_orig: where_clauses.append(f"id IN (SELECT pa.place_id FROM pleiades_attestations pa JOIN time_periods tp ON pa.time_period_key = tp.\"key\" WHERE tp.term IN ({to_sql_list(s_orig)}))")
-        st.code("SELECT * FROM places WHERE \n" + " AND \n".join(where_clauses), language="sql")
+        
+        if filters_active:
+            st.code("SELECT * FROM places WHERE \n" + " AND \n".join(where_clauses), language="sql")
+        else:
+            st.info("Select filters to generate query.")
 
 with tab_layers:
     st.subheader("Base Map")
