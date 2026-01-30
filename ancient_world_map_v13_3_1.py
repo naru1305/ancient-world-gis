@@ -37,7 +37,8 @@ STYLE_OPTIONS = {
     "Clean Dark": "CartoDB dark_matter",
     "ESRI World Imagery": "esri_world_imagery",
     "ESRI Ocean Base": "esri_ocean",
-    "EMODnet Bathymetry": "emodnet_bathymetry"  # <--- NEW
+    "ESRI National Geographic": "esri_natgeo", # <--- The "Stunning" & Fast option
+    "ESRI World Physical": "esri_physical"     # <--- Alternative terrain view
 }
 
 # --- LANGUAGE MAPPING ---
@@ -331,15 +332,21 @@ with tab_layers:
 st.title(PAGE_TITLE)
 
 selected_tiles = STYLE_OPTIONS[selected_style_name]
-attr, tiles_url = ("Esri", None), None
+attr, tiles_url = (None, None), None
 
-# LOGIC FOR DIFFERENT TILE PROVIDERS
-if selected_tiles == "emodnet_bathymetry":
-    # EMODnet Mean Atlas Land (Fast WMTS Tiles)
-    tiles_url = "https://tiles.emodnet-bathymetry.eu/2020/baselayer/web_mercator/{z}/{x}/{y}.png"
-    attr = "EMODnet Bathymetry Consortium (2020), GEBCO"
-    selected_tiles = None  # We provide a custom URL, so set this to None
-    
+# LOGIC FOR TILE PROVIDERS
+if selected_tiles == "esri_natgeo":
+    # The "Ancient World" Standard: Vintage paper style, very fast.
+    tiles_url = "https://server.arcgisonline.com/ArcGIS/rest/services/NatGeo_World_Map/MapServer/tile/{z}/{y}/{x}"
+    attr = "Esri, National Geographic, Garmin, HERE, UNEP-WCMC, USGS, NASA, ESA, METI, NRCAN, GEBCO, NOAA, increment P Corp."
+    selected_tiles = None
+
+elif selected_tiles == "esri_physical":
+    # Pure texture: Earth and Water physical features
+    tiles_url = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Physical_Map/MapServer/tile/{z}/{y}/{x}"
+    attr = "Esri, US National Park Service"
+    selected_tiles = None
+
 elif "esri" in selected_tiles:
     attr = "Esri"
     if selected_tiles == "esri_world_imagery":
