@@ -336,7 +336,7 @@ attr, tiles_url = ("Esri", None), None
 # LOGIC FOR DIFFERENT TILE PROVIDERS
 if selected_tiles == "emodnet_bathymetry":
     # EMODnet Mean Atlas Land (Fast WMTS Tiles)
-    tiles_url = "https://tiles.emodnet-bathymetry.eu/2020/mean_atlas_land/web_mercator/{z}/{x}/{y}.png"
+    tiles_url = "https://tiles.emodnet-bathymetry.eu/2020/baselayer/web_mercator/{z}/{x}/{y}.png"
     attr = "EMODnet Bathymetry Consortium (2020), GEBCO"
     selected_tiles = None  # We provide a custom URL, so set this to None
     
