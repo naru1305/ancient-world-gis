@@ -383,7 +383,7 @@ if show_labels and st.session_state['render_zoom'] >= LABEL_ZOOM_THRESHOLD:
             location=[float(row.lat), float(row.lon)],
             icon=folium.DivIcon(
                 html=f'''<div style="
-                    font-size: 10px; font-weight: 500; color: {label_color};
+                    font-size: 12px; font-weight: 500; color: {label_color};
                     text-shadow: -1px -1px 0 {label_shadow}, 1px -1px 0 {label_shadow}, 
                                  -1px 1px 0 {label_shadow}, 1px 1px 0 {label_shadow};
                     white-space: nowrap; pointer-events: none;
