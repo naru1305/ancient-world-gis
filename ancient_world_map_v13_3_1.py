@@ -36,7 +36,7 @@ STYLE_OPTIONS = {
     "Clean Light": "CartoDB positron",
     "Clean Dark": "CartoDB dark_matter",
     "ESRI World Imagery": "esri_world_imagery",
-    "ESRI Ocean Base": "esri_ocean"
+    "ESRI Ocean Base": "esri_ocean",
     "EMODnet Bathymetry": "emodnet_bathymetry"  # <--- NEW
 }
 
