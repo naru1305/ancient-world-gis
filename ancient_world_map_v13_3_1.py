@@ -1,25 +1,3 @@
-import os
-
-# --- STITCH DATABASE AUTOMATICALLY ---
-DB_FILE = 'AncientWorld_Locations.db'
-
-def stitch_db():
-    # Get a list of all part files (db_part_000, db_part_001, etc.)
-    parts = sorted([f for f in os.listdir('.') if f.startswith('db_part_')])
-    
-    if parts:
-        with open(DB_FILE, 'wb') as outfile:
-            for part in parts:
-                with open(part, 'rb') as infile:
-                    outfile.write(infile.read())
-        return True
-    return False
-
-# Check if DB exists; if not, try to stitch it
-if not os.path.exists(DB_FILE):
-    if not stitch_db():
-        st.error("Database chunks not found! Please check your repo.")
-
 import streamlit as st
 import pandas as pd
 import sqlite3
@@ -27,14 +5,32 @@ import folium
 from streamlit_folium import st_folium
 import uuid
 import numpy as np
+import os
+import gc  # <--- NEW: Garbage Collector for memory management
+
+# --- 0. AUTOMATIC DATABASE STITCHING ---
+DB_FILE = 'AncientWorld_Locations.db'
+
+if not os.path.exists(DB_FILE):
+    parts = sorted([f for f in os.listdir('.') if f.startswith('db_part_')])
+    if parts:
+        with st.spinner(f"Reassembling database from {len(parts)} parts..."):
+            with open(DB_FILE, 'wb') as outfile:
+                for part in parts:
+                    with open(part, 'rb') as infile:
+                        outfile.write(infile.read())
+    else:
+        st.error("❌ Database not found! Please ensure 'AncientWorld_Locations.db' or 'db_part_xxx' files are in the repository.")
+        st.stop()
 
 # --- CONFIGURATION ---
-DB_FILE = 'AncientWorld_Locations.db'
-PAGE_TITLE = "Ancient World Map"
+PAGE_TITLE = "Ancient World Map (Lite)"
 MIN_YEAR_LIMIT = -5000
 MAX_YEAR_LIMIT = 640
 LABEL_ZOOM_THRESHOLD = 7
 MAX_LABELS = 500
+# NEW: Hard limit on rendered points to prevent RAM crash
+MAX_RENDER_POINTS = 22000 
 
 # --- MAP STYLES ---
 STYLE_OPTIONS = {
@@ -56,18 +52,41 @@ LANGUAGE_MAP = {
 
 st.set_page_config(layout="wide", page_title=PAGE_TITLE)
 
+# --- CUSTOM CSS ---
+st.markdown("""
+<style>
+    .ancient-label {
+        background-color: rgba(255, 255, 255, 0.7) !important;
+        border: 1px solid #ccc !important;
+        box-shadow: 1px 1px 2px rgba(0,0,0,0.2) !important;
+        font-weight: bold;
+        font-size: 11px;
+        color: #000;
+        padding: 2px 5px !important;
+        border-radius: 4px;
+    }
+    .ancient-label-dark {
+        background-color: rgba(0, 0, 0, 0.6) !important;
+        border: 1px solid #555 !important;
+        box-shadow: 1px 1px 2px rgba(0,0,0,0.5) !important;
+        font-weight: bold;
+        font-size: 11px;
+        color: #fff;
+        padding: 2px 5px !important;
+        border-radius: 4px;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 # --- STATE MANAGEMENT ---
 if 'map_center' not in st.session_state:
     st.session_state['map_center'] = [41.9, 12.5]
 if 'map_zoom' not in st.session_state:
     st.session_state['map_zoom'] = 4
-
-# Render State (The Anchor)
 if 'render_center' not in st.session_state:
     st.session_state['render_center'] = [41.9, 12.5]
 if 'render_zoom' not in st.session_state:
     st.session_state['render_zoom'] = 4
-
 if 'selected_id' not in st.session_state:
     st.session_state['selected_id'] = None
 if 'map_key' not in st.session_state:
@@ -84,6 +103,7 @@ def load_base_data():
     df_geo = pd.read_sql_query("SELECT place_id, region FROM places_regions", conn)
     places_with_regions = set(df_geo['place_id'])
     
+    # NEW: Select only needed columns to save RAM
     df_places = pd.read_sql_query(f"""
         SELECT p.id, p.title, p.representative_latitude as lat, p.representative_longitude as lon,
                pte.final_start, pte.final_end
@@ -93,9 +113,13 @@ def load_base_data():
         AND pte.final_start <= {MAX_YEAR_LIMIT} AND pte.final_end >= {MIN_YEAR_LIMIT}
     """, conn)
     
-    df_places['id'] = pd.to_numeric(df_places['id'], errors='coerce').fillna(0).astype(int)
-    df_places['lat'] = pd.to_numeric(df_places['lat'], errors='coerce')
-    df_places['lon'] = pd.to_numeric(df_places['lon'], errors='coerce')
+    # NEW: Memory Optimization (Downcasting)
+    df_places['id'] = pd.to_numeric(df_places['id'], errors='coerce').fillna(0).astype('int32')
+    df_places['lat'] = pd.to_numeric(df_places['lat'], errors='coerce').astype('float32')
+    df_places['lon'] = pd.to_numeric(df_places['lon'], errors='coerce').astype('float32')
+    df_places['final_start'] = pd.to_numeric(df_places['final_start'], errors='coerce').fillna(0).astype('int16')
+    df_places['final_end'] = pd.to_numeric(df_places['final_end'], errors='coerce').fillna(0).astype('int16')
+
     df_places = df_places.dropna(subset=['lat', 'lon'])
     df_places = df_places[df_places['id'].isin(places_with_regions)].reset_index(drop=True)
     df_places['search_label'] = df_places['title'] + " (" + df_places['id'].astype(str) + ")"
@@ -109,15 +133,16 @@ def load_base_data():
 @st.cache_data
 def get_geojson_data(df):
     features = []
-    for _, row in df.iterrows():
+    # Use standard tuple iteration for speed/memory
+    for row in df.itertuples():
         features.append({
             "type": "Feature",
             "geometry": {
-                "type": "Point", "coordinates": [row['lon'], row['lat']],
+                "type": "Point", "coordinates": [row.lon, row.lat],
             },
             "properties": {
-                "id": int(row['id']),
-                "title": row['title']
+                "id": row.id,
+                "title": row.title
             }
         })
     return {"type": "FeatureCollection", "features": features}
@@ -142,18 +167,19 @@ def get_labels_near_center(df, center_lat, center_lon, zoom, max_labels=500):
     df['_dist'] = np.sqrt((df['lat'] - center_lat)**2 + (df['lon'] - center_lon)**2)
     return df[df['_dist'] <= visible_radius].sort_values('_dist').head(max_labels)
 
-# --- HELPERS ---
 def sync_view_state():
-    """Callback to latch the view state before re-running."""
+    """Syncs the render anchor to the tracker."""
     st.session_state['render_center'] = st.session_state['map_center']
     st.session_state['render_zoom'] = st.session_state['map_zoom']
+    # Explicitly clear garbage to free memory
+    gc.collect()
 
 # --- LOAD DATA ---
 df_places, df_geo, df_epochs, df_original, df_types = load_base_data()
 
 # --- SIDEBAR ---
 st.sidebar.title("🌍 Ancient World")
-st.sidebar.caption(f"📍 {len(df_places)} places with region data")
+st.sidebar.caption(f"📍 {len(df_places)} places available")
 tab_filters, tab_layers = st.sidebar.tabs(["🔍 Filters", "🗺️ Layers"])
 
 with tab_filters:
@@ -173,12 +199,11 @@ with tab_filters:
     st.selectbox("Find a place:", options=df_places['search_label'].tolist(), index=None, key="search_box", on_change=handle_search, placeholder="Type to search...")
     st.markdown("---")
     
-    if 'last_time_range' not in st.session_state: st.session_state['last_time_range'] = (-1200, -100)
+    if 'last_time_range' not in st.session_state: st.session_state['last_time_range'] = (-5000, -4000)
     time_range = st.slider("Time Period", MIN_YEAR_LIMIT, MAX_YEAR_LIMIT, st.session_state['last_time_range'], 50, on_change=sync_view_state)
     st.session_state['last_time_range'] = time_range
 
     st.markdown("---")
-    
     def get_opt(df, col): return sorted([x for x in df[col].unique() if x and isinstance(x, str)])
     
     s_type = st.multiselect("Place Type", get_opt(df_types, 'place_type'), on_change=sync_view_state)
@@ -188,6 +213,7 @@ with tab_filters:
     s_sub = st.multiselect("System Subperiod", get_opt(df_epochs, 'system_subperiod'), on_change=sync_view_state)
     s_orig = st.multiselect("Original Pleiades Terms", get_opt(df_original, 'term'), on_change=sync_view_state)
 
+    # Apply Filters
     mask_time = (df_places['final_start'] <= time_range[1]) & (df_places['final_end'] >= time_range[0])
     valid_ids = set(df_places.loc[mask_time, 'id'])
     def intersect(c_ids, df, col, vals): return c_ids.intersection(set(df[df[col].isin(vals)]['place_id'])) if vals else c_ids
@@ -199,7 +225,15 @@ with tab_filters:
     if s_orig: valid_ids = valid_ids.intersection(set(df_original[df_original['term'].isin(s_orig)]['place_id']))
 
     df_view = df_places[df_places['id'].isin(valid_ids)].reset_index(drop=True)
-    st.caption(f"📍 {len(df_view)} Places shown")
+    
+    # --- MEMORY SAFETY VALVE ---
+    # If too many points, truncate them to avoid Free Tier crash
+    total_results = len(df_view)
+    if total_results > MAX_RENDER_POINTS:
+        st.warning(f"⚠️ {total_results} places found. Showing top {MAX_RENDER_POINTS} to save memory. Filter to see specific results.")
+        df_view = df_view.head(MAX_RENDER_POINTS)
+    else:
+        st.caption(f"📍 {total_results} Places shown")
     
     st.markdown("### 📥 Export")
     st.download_button("Download CSV", df_view.to_csv(index=False).encode('utf-8'), "ancient_places.csv", "text/csv")
@@ -284,12 +318,12 @@ if selected_id:
     if not sel_row.empty:
         row = sel_row.iloc[0]
         folium.CircleMarker(
-            location=[float(row['lat']), float(row['lon'])],
+            location=[float(row.lat), float(row.lon)],
             radius=12, color='#000000', weight=3, fill=True, fill_color='#ffdd00', fill_opacity=1.0,
-            tooltip=f"<b>{row['title']}</b> (Selected)"
+            tooltip=f"<b>{row.title}</b> (Selected)"
         ).add_to(m)
 
-# 4. MARKER LABEL LAYER (RESTORED CLEAN STYLE)
+# 4. MARKER LABEL LAYER (CLEAN STYLE)
 if show_labels and st.session_state['render_zoom'] >= LABEL_ZOOM_THRESHOLD:
     df_labels = get_labels_near_center(
         df_view, 
@@ -299,16 +333,16 @@ if show_labels and st.session_state['render_zoom'] >= LABEL_ZOOM_THRESHOLD:
         MAX_LABELS
     )
     
-    for _, row in df_labels.iterrows():
+    for row in df_labels.itertuples():
         folium.Marker(
-            location=[float(row['lat']), float(row['lon'])],
+            location=[float(row.lat), float(row.lon)],
             icon=folium.DivIcon(
                 html=f'''<div style="
                     font-size: 10px; font-weight: 500; color: {label_color};
                     text-shadow: -1px -1px 0 {label_shadow}, 1px -1px 0 {label_shadow}, 
                                  -1px 1px 0 {label_shadow}, 1px 1px 0 {label_shadow};
                     white-space: nowrap; pointer-events: none;
-                    position: relative; left: 8px; top: -5px;">{row['title']}</div>''',
+                    position: relative; left: 8px; top: -5px;">{row.title}</div>''',
                 icon_size=(0, 0), icon_anchor=(0, 0)
             )
         ).add_to(m)
