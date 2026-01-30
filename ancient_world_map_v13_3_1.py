@@ -179,17 +179,6 @@ st.sidebar.title("🌍 Ancient World")
 st.sidebar.caption(f"📍 {len(df_places)} places available")
 tab_filters, tab_layers = st.sidebar.tabs(["🔍 Filters", "🗺️ Layers"])
 
-# --- Panic Button Soft Map reset ---
-st.markdown("---")
-st.caption("🔧 **Troubleshooting**")
-if st.button("💥 Reset Map (Fix Crash)"):
-    # Force a new map instance by regenerating the key
-    st.session_state['map_key'] = str(uuid.uuid4())
-    # Optional: Reset center if you want to return to start
-    # st.session_state['render_center'] = [41.9, 12.5]
-    # st.session_state['render_zoom'] = 4
-    st.rerun()
-
 with tab_filters:
     def handle_search():
         val = st.session_state.get("search_box")
@@ -206,6 +195,17 @@ with tab_filters:
 
     st.selectbox("Find a place:", options=df_places['search_label'].tolist(), index=None, key="search_box", on_change=handle_search, placeholder="Type to search...")
     st.markdown("---")
+
+    # --- Panic Button Soft Map reset ---
+    st.markdown("---")
+    st.caption("🔧 **Troubleshooting**")
+    if st.button("💥 Reset Map (Fix Crash)"):
+        # Force a new map instance by regenerating the key
+        st.session_state['map_key'] = str(uuid.uuid4())
+        # Optional: Reset center if you want to return to start
+        # st.session_state['render_center'] = [41.9, 12.5]
+        # st.session_state['render_zoom'] = 4
+        st.rerun()
     
     # --- LOGIC CHANGE: TIME FILTER TOGGLE ---
     use_time_filter = st.toggle("⏱️ Filter by Time Range", value=False, on_change=sync_view_state)
