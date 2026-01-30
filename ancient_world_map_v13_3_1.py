@@ -37,6 +37,7 @@ STYLE_OPTIONS = {
     "Clean Dark": "CartoDB dark_matter",
     "ESRI World Imagery": "esri_world_imagery",
     "ESRI Ocean Base": "esri_ocean"
+    "EMODnet Bathymetry": "emodnet_bathymetry"  # <--- NEW
 }
 
 # --- LANGUAGE MAPPING ---
@@ -331,13 +332,23 @@ st.title(PAGE_TITLE)
 
 selected_tiles = STYLE_OPTIONS[selected_style_name]
 attr, tiles_url = ("Esri", None), None
-if "esri" in selected_tiles:
+
+# LOGIC FOR DIFFERENT TILE PROVIDERS
+if selected_tiles == "emodnet_bathymetry":
+    # EMODnet Mean Atlas Land (Fast WMTS Tiles)
+    tiles_url = "https://tiles.emodnet-bathymetry.eu/2020/mean_atlas_land/web_mercator/{z}/{x}/{y}.png"
+    attr = "EMODnet Bathymetry Consortium (2020), GEBCO"
+    selected_tiles = None  # We provide a custom URL, so set this to None
+    
+elif "esri" in selected_tiles:
     attr = "Esri"
     if selected_tiles == "esri_world_imagery":
         tiles_url = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
     elif selected_tiles == "esri_ocean":
         tiles_url = "https://server.arcgisonline.com/ArcGIS/rest/services/Ocean/World_Ocean_Base/MapServer/tile/{z}/{y}/{x}"
     selected_tiles = None
+
+# If it's not custom (like CartoDB), 'selected_tiles' stays as the string name for Folium to handle naturally.
 
 is_dark_map = selected_style_name in ["Clean Dark", "ESRI World Imagery", "ESRI Ocean Base"]
 label_color = "white" if is_dark_map else "#333333"
