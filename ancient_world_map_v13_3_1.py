@@ -179,6 +179,17 @@ st.sidebar.title("🌍 Ancient World")
 st.sidebar.caption(f"📍 {len(df_places)} places available")
 tab_filters, tab_layers = st.sidebar.tabs(["🔍 Filters", "🗺️ Layers"])
 
+# --- Panic Button Soft Map reset ---
+st.markdown("---")
+    st.caption("🔧 **Troubleshooting**")
+    if st.button("💥 Reset Map (Fix Crash)"):
+        # Force a new map instance by regenerating the key
+        st.session_state['map_key'] = str(uuid.uuid4())
+        # Optional: Reset center if you want to return to start
+        # st.session_state['render_center'] = [41.9, 12.5]
+        # st.session_state['render_zoom'] = 4
+        st.rerun()
+
 with tab_filters:
     def handle_search():
         val = st.session_state.get("search_box")
